@@ -12,9 +12,9 @@ from typing import Any
 import httpx
 from fastmcp import Context, FastMCP
 
-from ..config import MAX_UPLOAD_BYTES, SSL_VERIFY, VIYA_ENDPOINT
-from ..env import env_bool
+from ..config import VIYA_ENDPOINT
 from ..helpers.folder_helpers import FolderError, create_folder_path, resolve_folder
+from ..helpers.upload_sources import resolve_source_bytes
 from ..viya_client import (
     contains_filter,
     get_json,
@@ -140,92 +140,6 @@ def _resolve_data_format(
             "message": fmt.unsupported_reason or f"Format '{fmt.key}' is not accepted by the upload endpoint.",
         }
     return fmt, None
-
-
-def _source_too_large(source: str, size_bytes: int | None) -> dict[str, Any]:
-    """Structured refusal for an upload source over ``MAX_UPLOAD_BYTES``."""
-    error: dict[str, Any] = {
-        "status": "source_too_large",
-        "source": source,
-        "limit_bytes": MAX_UPLOAD_BYTES,
-        "message": (
-            f"The {source} source exceeds the {MAX_UPLOAD_BYTES:,}-byte upload "
-            "limit (MAX_UPLOAD_BYTES; the default matches SAS Viya's 100 MB "
-            "file-upload cap, so a larger payload would be refused upstream "
-            "anyway). For large data, load it via a path-based caslib and "
-            "promote_table_to_memory, or ask the administrator to raise both limits."
-        ),
-    }
-    if size_bytes is not None:
-        error["size_bytes"] = size_bytes
-    return error
-
-
-async def _resolve_source_bytes(file_path: str | None, url: str | None) -> tuple[bytes | None, dict[str, Any] | None]:
-    """Materialize the upload bytes server-side from ``file_path`` or ``url``.
-
-    Assumes exactly one of the two is set (the caller's exactly-one-source
-    guard). The bytes are read off the server's disk or fetched over HTTP, never
-    routed through the model context. Either source is refused past
-    ``MAX_UPLOAD_BYTES`` — the payload is held in memory in full while it is
-    re-posted to Viya, so the cap is what keeps one oversized source from
-    exhausting the process. Returns ``(bytes, None)`` or ``(None, error)``.
-    """
-    if file_path:
-        if not env_bool("ALLOW_LOCAL_FILE_UPLOAD", True):
-            return None, {
-                "status": "file_upload_disabled",
-                "message": (
-                    "Server-side file reads are disabled "
-                    "(ALLOW_LOCAL_FILE_UPLOAD=false). Use url or the upload_inline_data tool."
-                ),
-            }
-        path = Path(file_path).expanduser()
-        if not path.is_file():
-            return None, {
-                "status": "file_not_found",
-                "file_path": file_path,
-                "message": (
-                    f"No readable file at '{file_path}' on the server host. In "
-                    "stdio mode that host is your local machine; pass an absolute path."
-                ),
-            }
-        try:
-            size = path.stat().st_size
-            if size > MAX_UPLOAD_BYTES:
-                return None, _source_too_large("file_path", size)
-            return path.read_bytes(), None
-        except OSError as exc:
-            return None, {
-                "status": "file_unreadable",
-                "file_path": file_path,
-                "message": str(exc),
-            }
-    # url — fetch with a plain client (no Viya bearer on an external URL).
-    assert url is not None
-    try:
-        async with (
-            httpx.AsyncClient(timeout=120.0, follow_redirects=True, verify=SSL_VERIFY) as fetch_client,
-            fetch_client.stream("GET", url) as fetch_resp,
-        ):
-            # Plain raise_for_status on purpose: this is an arbitrary caller-supplied
-            # URL, not Viya, so there is no vnd.sas.error+json body worth quoting
-            # and folding a third-party page into the message adds only noise.
-            fetch_resp.raise_for_status()
-            # Refuse on the declared size when there is one, but never trust
-            # it: the cap is enforced again while the body streams in, so an
-            # absent or lying Content-Length cannot blow past the limit.
-            declared = fetch_resp.headers.get("Content-Length")
-            if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
-                return None, _source_too_large("url", int(declared))
-            buf = bytearray()
-            async for chunk in fetch_resp.aiter_bytes():
-                buf += chunk
-                if len(buf) > MAX_UPLOAD_BYTES:
-                    return None, _source_too_large("url", None)
-            return bytes(buf), None
-    except httpx.HTTPError as exc:
-        return None, {"status": "fetch_failed", "url": url, "message": str(exc)}
 
 
 async def _post_cas_upload(
@@ -408,7 +322,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             return fmt_error
         assert fmt is not None  # paired with fmt_error by _resolve_data_format
 
-        file_bytes, source_error = await _resolve_source_bytes(file_path, url)
+        file_bytes, source_error = await resolve_source_bytes(file_path, url)
         if source_error is not None:
             return source_error
         assert file_bytes is not None  # paired with source_error
@@ -599,7 +513,7 @@ def register(mcp: FastMCP, get_token: Callable[[Context], Awaitable[str]]) -> No
             file_bytes = content.encode("utf-8")
             resolved_type = content_type or "text/plain"
         else:
-            file_bytes, error = await _resolve_source_bytes(file_path, url)
+            file_bytes, error = await resolve_source_bytes(file_path, url)
             if error is not None:
                 return error
             assert file_bytes is not None

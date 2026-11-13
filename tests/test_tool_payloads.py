@@ -2702,10 +2702,10 @@ async def test_upload_data_from_file_path(mcp_server_with_mock_client, tmp_path)
 
 async def test_upload_data_file_path_over_limit(mcp_server_with_mock_client, tmp_path, monkeypatch):
     """A file over MAX_UPLOAD_BYTES is refused before any read or Viya call."""
-    from sas_mcp_server.tools import data_ops
+    from sas_mcp_server.helpers import upload_sources
 
     mcp, mock_client = mcp_server_with_mock_client
-    monkeypatch.setattr(data_ops, "MAX_UPLOAD_BYTES", 16)
+    monkeypatch.setattr(upload_sources, "MAX_UPLOAD_BYTES", 16)
     big = tmp_path / "big.csv"
     big.write_bytes(b"a,b\n" + b"1,2\n" * 10)  # 44 bytes > 16
     async with Client(mcp) as client:
@@ -2727,10 +2727,10 @@ async def test_upload_data_file_path_over_limit(mcp_server_with_mock_client, tmp
 
 async def test_upload_data_url_over_limit_by_content_length(mcp_server_with_mock_client, monkeypatch):
     """A URL whose declared Content-Length exceeds the cap is refused up front."""
-    from sas_mcp_server.tools import data_ops
+    from sas_mcp_server.helpers import upload_sources
 
     mcp, mock_client = mcp_server_with_mock_client
-    monkeypatch.setattr(data_ops, "MAX_UPLOAD_BYTES", 16)
+    monkeypatch.setattr(upload_sources, "MAX_UPLOAD_BYTES", 16)
     real_client = httpx.AsyncClient
 
     def handler(request):
@@ -2757,10 +2757,10 @@ async def test_upload_data_url_over_limit_by_content_length(mcp_server_with_mock
 
 async def test_upload_data_url_over_limit_while_streaming(mcp_server_with_mock_client, monkeypatch):
     """Without a Content-Length, the cap is still enforced as the body streams in."""
-    from sas_mcp_server.tools import data_ops
+    from sas_mcp_server.helpers import upload_sources
 
     mcp, mock_client = mcp_server_with_mock_client
-    monkeypatch.setattr(data_ops, "MAX_UPLOAD_BYTES", 16)
+    monkeypatch.setattr(upload_sources, "MAX_UPLOAD_BYTES", 16)
     real_client = httpx.AsyncClient
 
     async def chunks():
