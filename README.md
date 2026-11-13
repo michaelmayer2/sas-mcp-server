@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server for executing SAS code, training AutoML pr
 
 ## Features
 
-- 137 tools across 12 selectable tiers, spanning the Analytics Life Cycle on SAS Viya
+- 171 tools across 14 selectable tiers, spanning the Analytics Life Cycle on SAS Viya, plus SAS Clinical Acceleration
 - Interactive views (MCP Apps) for data, SAS logs and glossary editing in clients that render them — Claude, ChatGPT, Microsoft 365 Copilot, VS Code, Cursor
 - Prompt Templates for improving your SAS Code
 - OAuth2 authentication with PKCE flow
@@ -167,6 +167,8 @@ Tools are grouped into numbered tiers. By default the server exposes all of them
 | 9 | Business Glossary (SAS Data Governance) |
 | 10 | Decisioning Advanced (SAS Intelligent Decisioning) — needs Tier 7 |
 | 11 | Model Lifecycle (SAS Model Manager) |
+| 12 | Clinical Repository (SAS Clinical Acceleration) |
+| 13 | Clinical Jobs (SAS Clinical Job Management) — needs Tier 12 |
 
 ```sh
 # Example: expose only compute/discovery/data-ops and reporting
@@ -175,7 +177,7 @@ MCP_TIERS=0-3 uv run app
 
 ### Read-only mode
 
-Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 64 of the 137 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
+Set `MCP_READ_ONLY=true` to expose only tools that neither change server-side state nor cause server-side work — 80 of the 171 tools. Withheld tools are never registered, so they are absent from the client's tool list entirely: the model cannot see them, so it cannot attempt them.
 
 This is a filter over the tiers, not a tier of its own — the read/write split cuts across every tier (Tier 3 has both `get_report` and `delete_report`). The two settings compose:
 
@@ -442,6 +444,43 @@ The steps after a model is trained: register it, keep it in a project, make it t
 - **set_kpi_alert_rule**: Alert when a KPI crosses a threshold: accuracy KPIs (`AUC`, `misclassification`, …), drift (`devIndex`, one rule per input or output variable) or fairness for a sensitive variable; above or below, with Model Manager's priority and number of occurrences. A rule for the same KPI, variable and direction is updated, not duplicated, and the result says whether the champion breaks it now
 - **delete_kpi_alert_rule**: Delete a KPI alert rule
 
+#### Tier 12 — Clinical Repository (SAS Clinical Acceleration)
+SAS Clinical Acceleration keeps clinical study files in a controlled repository, and changes go through each user's private workspace on the server: copy or check out files, edit them there, check them back in as new versions. These tools do what the Clinical Acceleration views of the Positron SAS extension do, under the caller's own identity and CA permissions. Paths address everything: the same path names a file in the repository and its copy in the workspace, and `location` (`repository` or `workspace`) says which a call means.
+
+> **Electronic signing is not offered.** A signature needs the signer's own authenticator PIN; **clinical_get_signature_history** reads signatures.
+
+*Browse, read and search:*
+- **clinical_list_items**: A repository or workspace folder, with each item's version, lock and check-out state (and whether you hold it), and how the workspace copy compares
+- **clinical_get_item**: An item's properties, with your permissions (`READ`, `WRITE`, …) and versioning privileges, which explain refused actions
+- **clinical_read_file**: A file at the latest or any version; text inline, other files embedded
+- **clinical_download_items**: Files and folders as one zip
+- **clinical_list_versions**: A file's versions, newest first, with author, date and comment
+- **clinical_compare_files**: A unified diff of two files or versions across the repository and the workspace (by default, the repository file against your workspace copy)
+- **clinical_search_repository**: Search the whole repository by name, folder, item type and check-out state
+- **clinical_search_audit_history**: The audit history — who did what to which item, when — by item, folder, action, user and time; you see your own events, Clinical Administrators everyone's
+- **clinical_get_signature_history**: A file's electronic signatures
+
+*Workspace and check-in:*
+- **clinical_copy_to_workspace**: Copy files or folders (latest, a version, or just the folder structure) without reserving them
+- **clinical_check_out** / **clinical_undo_check_out**: Reserve files for editing (`with_content=false` keeps your workspace copy), or give the reservation up
+- **clinical_check_in**: Check workspace files in as new versions or new files, with a required comment; reports what it left out and why (a copy you did not check out, a file someone else holds)
+- **clinical_write_file**: Create or overwrite a workspace file, creating missing folders
+
+*Either location:*
+- **clinical_create_folder**, **clinical_rename_item**, **clinical_delete_items** (repository deletes go to the recycle bin), **clinical_upload** (a file, or a zip unpacked into the folder; text, a server-side file or a URL)
+- **clinical_set_versioning**: Turn versioning on or off for a repository file; needs a versioning privilege
+- **clinical_load_dataset**: Load a `.sas7bdat` or `.xpt` (XPORT or CPORT) from the repository or workspace into a WORK library of your compute session, ready for `execute_sas_code` and the data tools
+
+#### Tier 13 — Clinical Jobs (SAS Clinical Job Management)
+A clinical job (`.cjob`) lists SAS programs to run in order and their parameters. Each run writes a manifest (`.cmnf`), the audit record of the run: which programs ran and how they ended, the parameter values, and every file the run read and wrote, with its version and checksum. Needs Tier 12 for the files themselves.
+
+- **clinical_get_job** / **clinical_save_job**: Read a job, or create or replace a workspace job (programs, parameters, output locations, the inputs and check-in locations of repository runs)
+- **clinical_run_job**: Run a job (`run`), test a workspace job as if from the repository (`test`), or run it and fill its repository inputs from what it read and wrote (`run_and_populate`); run a single program as a job, or repeat an earlier run
+- **clinical_get_job_run** / **clinical_list_job_runs** / **clinical_cancel_job_run**: Follow, list and cancel runs
+- **clinical_get_job_manifest**: A run's manifest as an audit record — inputs and outputs with versions and MD5 checksums, parameter values, program results, check-in locations and failures
+- **clinical_get_job_output**: A run's log (with its ERROR lines) or listing
+- **clinical_list_schedules** / **clinical_get_schedule** / **clinical_save_schedule** / **clinical_set_schedule_state** / **clinical_delete_schedule** / **clinical_run_schedule_now**: Schedules that run jobs once, on dates, or every few minutes, hourly, daily, weekly, monthly or yearly, with the next run times as the server calculates them
+
 ### Prompt Templates
 
 - **debug_sas_log**: Analyze SAS log for errors with root-cause explanations
@@ -453,6 +492,8 @@ The steps after a model is trained: register it, keep it in a project, make it t
 - **sas_macro_builder**: Build production-quality SAS macros
 - **generate_report**: Generate ODS/PROC REPORT code
 - **build_va_dashboard**: Guide a polished multi-page Visual Analytics dashboard build from a CAS table — a discover → shape → structure → polish → verify method over the report-authoring tools
+- **promote_clinical_job**: Take a clinical job from the workspace to an audited repository run — run and populate → check in → test → run from the repository → review the manifest
+- **audit_clinical_run**: Review a clinical job run's manifest as an audit record, and answer a question from it
 
 ## MCP Client Configuration
 
@@ -696,7 +737,7 @@ tsv, and `file_path`/`data_format` coverage needs no extra deps. Generating a
 `sas7bdat`/`sashdat` fixture requires SAS itself, so those two formats are covered by
 unit-level payload tests only, not live.
 
-Every one of the 137 tools and 9 prompt templates has an integration test, enforced by the
+Every one of the 171 tools and 11 prompt templates has an integration test, enforced by the
 `test_every_tool_has_integration_coverage` / `test_every_prompt_has_integration_coverage`
 guards — adding a new tool or prompt without integration coverage fails the suite. The
 resource-dependent tests discover real targets on the instance: `score_data` scores the most
@@ -706,6 +747,15 @@ has no such resource at all. Likewise, `test_catalog_agents_workflow` `skip`s wi
 discovery agent named 'Public'"* on instances where SAS Data Governance has no discovery
 agent named `Public` configured — an expected skip, not a failure; ask a Viya admin to
 configure one if you need that test to run.
+
+**SAS Clinical Acceleration (Tiers 12 and 13)** is tested only where the instance runs it;
+elsewhere those tests `skip`. They work in a scratch folder of your Clinical Workspace and
+remove it afterwards. The repository-writing tools (upload, check out, check in, rename,
+versioning, delete) are exercised only when `CA_TEST_REPOSITORY_FOLDER` names a repository
+folder you may write to, because they leave versions and audit entries behind; deleting the
+test folder afterwards needs DELETE permission there. Where SAS Logon offers no client that
+allows the password grant, sign in another way (e.g. `sas-mcp-login`) and pass the access
+token as `VIYA_ACCESS_TOKEN` (with `VIYA_ENDPOINT`) instead of a username and password.
 
 **In CI:** the `.github/workflows/integration.yml` workflow runs this suite on demand
 (manual dispatch, or by adding the `run-integration` label to a PR) using repository
@@ -735,6 +785,8 @@ gh gist create reports/integration.xml                          # full XML as a 
 | `tests/test_tool_payloads.py` | Payload assertions for all 75 Tier 0-8 tools (URL paths, JSON body, query params, headers) plus error-path coverage |
 | `tests/test_integration.py` | End-to-end workflow tests against a real Viya instance |
 | `tests/test_model_lifecycle.py` | Tool tests for the model tools (Tiers 2, 6 and 11) against a routed fake Viya, and the SAS programs they generate |
+| `tests/test_clinical_tools.py` | Tool tests for the Clinical Acceleration tools (Tiers 12 and 13) against a routed fake that answers with real HTTP responses |
+| `tests/test_clinical_helpers.py` | Unit tests for the Clinical Acceleration helpers: check-in planning, versions, parameter encoding, schedules, manifests, loading datasets into WORK |
 | `tests/test_tools.py` | Unit tests for the generic Viya REST helpers in `viya_client` (`get_json`, `post_json`, `make_client`, …) |
 | `tests/test_viya_utils.py` | Unit tests for Viya compute session and job orchestration |
 | `tests/test_mcp_server.py` | Unit tests for the HTTP auth middleware, health route, and token getter |

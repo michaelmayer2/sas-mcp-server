@@ -1807,6 +1807,8 @@ PROMPT_RENDER_ARGS = {
     "sas_macro_builder": {"macro_name": "loadcsv", "purpose": "Load a CSV into CAS"},
     "generate_report": {"dataset": "SASHELP.CLASS"},
     "build_va_dashboard": {"table": "Public.HMEQ"},
+    "promote_clinical_job": {"job_path": "/Org/Study/programs/adsl.cjob"},
+    "audit_clinical_run": {"run_id": "00000000-0000-0000-0000-000000000000"},
 }
 
 
@@ -2451,6 +2453,42 @@ TOOL_COVERAGE = {
     "get_project_kpis": "test_model_lifecycle_workflow",
     "set_kpi_alert_rule": "test_model_lifecycle_workflow",
     "delete_kpi_alert_rule": "test_model_lifecycle_workflow",
+    # Tier 12 — repository writes run only with CA_TEST_REPOSITORY_FOLDER set
+    "clinical_list_items": "test_clinical_repository_workflow",
+    "clinical_get_item": "test_clinical_repository_workflow",
+    "clinical_read_file": "test_clinical_repository_workflow",
+    "clinical_download_items": "test_clinical_repository_workflow",
+    "clinical_list_versions": "test_clinical_repository_workflow",
+    "clinical_compare_files": "test_clinical_repository_workflow",
+    "clinical_search_repository": "test_clinical_repository_workflow",
+    "clinical_search_audit_history": "test_clinical_repository_workflow",
+    "clinical_get_signature_history": "test_clinical_repository_workflow",
+    "clinical_copy_to_workspace": "test_clinical_repository_workflow",
+    "clinical_check_out": "test_clinical_repository_workflow",
+    "clinical_undo_check_out": "test_clinical_repository_workflow",
+    "clinical_check_in": "test_clinical_repository_workflow",
+    "clinical_write_file": "test_clinical_repository_workflow",
+    "clinical_create_folder": "test_clinical_repository_workflow",
+    "clinical_rename_item": "test_clinical_repository_workflow",
+    "clinical_delete_items": "test_clinical_repository_workflow",
+    "clinical_upload": "test_clinical_repository_workflow",
+    "clinical_set_versioning": "test_clinical_repository_workflow",
+    "clinical_load_dataset": "test_clinical_repository_workflow",
+    # Tier 13
+    "clinical_get_job": "test_clinical_jobs_workflow",
+    "clinical_save_job": "test_clinical_jobs_workflow",
+    "clinical_run_job": "test_clinical_jobs_workflow",
+    "clinical_get_job_run": "test_clinical_jobs_workflow",
+    "clinical_list_job_runs": "test_clinical_jobs_workflow",
+    "clinical_cancel_job_run": "test_clinical_jobs_workflow",
+    "clinical_get_job_manifest": "test_clinical_jobs_workflow",
+    "clinical_get_job_output": "test_clinical_jobs_workflow",
+    "clinical_list_schedules": "test_clinical_jobs_workflow",
+    "clinical_get_schedule": "test_clinical_jobs_workflow",
+    "clinical_save_schedule": "test_clinical_jobs_workflow",
+    "clinical_set_schedule_state": "test_clinical_jobs_workflow",
+    "clinical_delete_schedule": "test_clinical_jobs_workflow",
+    "clinical_run_schedule_now": "test_clinical_jobs_workflow",
 }
 
 
@@ -3345,3 +3383,182 @@ async def test_glossary_bulk_import(integration_mcp_server):
                 await client.call_tool(
                     "delete_glossary_term_type", {"term_type_id": type_id, "force": True}
                 )
+
+
+# -----------------------------------------------------------------------
+# SAS Clinical Acceleration (Tiers 12 and 13)
+# -----------------------------------------------------------------------
+
+# Repository writes leave versions and audit entries behind, and many users may
+# not delete what they create, so they run only in a folder named for them.
+CA_REPO_FOLDER = os.getenv("CA_TEST_REPOSITORY_FOLDER", "").rstrip("/")
+
+
+async def _ca(client, tool, **args):
+    result = await client.call_tool(tool, args, raise_on_error=False)
+    assert not result.is_error, f"{tool}: {result.content[0].text}"
+    return result.data if result.data is not None else result.content[0]
+
+
+async def _skip_without_ca(token: str, jobs: bool = False) -> None:
+    try:
+        await _viya_get(token, "/clinicalRepository/repository/paths", {"path": "/"})
+        if jobs:
+            await _viya_get(token, "/clinicalJobs/submissions", {"limit": 1})
+    except Exception as e:
+        pytest.skip(f"SAS Clinical Acceleration{' Job Management' if jobs else ''} not available: {e}")
+
+
+async def test_clinical_repository_workflow(integration_mcp_server, viya_token):
+    """Browse, read, search and audit the repository; edit in a scratch workspace folder;
+    with CA_TEST_REPOSITORY_FOLDER, also upload, check out, check in, rename and delete there."""
+    await _skip_without_ca(viya_token)
+    scratch = f"/mcp-it-{_SUFFIX}"
+    async with Client(integration_mcp_server) as client:
+        top = await _ca(client, "clinical_list_items", path="/")
+        assert top["items"], "the repository has no top-level items to browse"
+        found = await _ca(client, "clinical_search_repository", primary_type="FILE", limit=50)
+        files = found["items"]
+        if not files:
+            pytest.skip("No files in the Clinical Repository to read")
+        texts = [f for f in files if f["path"].endswith((".sas", ".txt", ".log", ".csv"))]
+        sample = (texts or files)[0]["path"]
+        assert (await _ca(client, "clinical_get_item", path=sample))["path"] == sample
+        await _ca(client, "clinical_read_file", path=sample)
+        await _ca(client, "clinical_download_items", paths=[sample])
+        versions = await _ca(client, "clinical_list_versions", path=sample)
+        assert "versioned" in versions
+        assert "signatures" in await _ca(client, "clinical_get_signature_history", path=sample)
+        audit = await _ca(client, "clinical_search_audit_history", path=sample, limit=3)
+        assert "entries" in audit
+
+        try:
+            assert (await _ca(client, "clinical_create_folder", path=scratch))["status"] == "created"
+            out = await _ca(client, "clinical_write_file", path=f"{scratch}/a.sas", content="data x; y=1; run;\n")
+            assert out["status"] == "created"
+            await _ca(client, "clinical_write_file", path=f"{scratch}/b.sas", content="data x; y=2; run;\n")
+            listed = await _ca(client, "clinical_list_items", path=scratch, location="workspace")
+            assert {i["name"] for i in listed["items"]} == {"a.sas", "b.sas"}
+            diff = await _ca(
+                client,
+                "clinical_compare_files",
+                left_path=f"{scratch}/a.sas",
+                left_location="workspace",
+                right_path=f"{scratch}/b.sas",
+            )
+            assert diff["identical"] is False
+            up = await _ca(client, "clinical_upload", folder=scratch, name="c.txt", content="c")
+            assert up["status"] == "completed", up
+            renamed = await _ca(client, "clinical_rename_item", path=f"{scratch}/c.txt", new_name="d.txt")
+            assert renamed["path"] == f"{scratch}/d.txt"
+            got = await _ca(client, "clinical_read_file", path=f"{scratch}/d.txt", location="workspace")
+            assert got["content"] == "c"
+
+            datasets = [f for f in files if f["path"].endswith((".xpt", ".sas7bdat"))]
+            if not datasets:
+                datasets = (await _ca(client, "clinical_search_repository", type_id="sasdataset", limit=1))["items"]
+            if datasets:
+                loaded = await _ca(client, "clinical_load_dataset", path=datasets[0]["path"])
+                assert loaded["status"] == "loaded" and loaded["datasets"], loaded
+        finally:
+            await _ca(client, "clinical_delete_items", paths=[scratch])
+
+        if not CA_REPO_FOLDER:
+            return  # the repository-writing tools are covered only with a folder to write in
+        run = f"{CA_REPO_FOLDER}/it-{_SUFFIX}"
+        try:
+            assert (await _ca(client, "clinical_create_folder", path=run, location="repository"))["status"] == "created"
+            up = await _ca(
+                client, "clinical_upload", folder=run, name="p.sas", location="repository", content="%put v1;\n"
+            )
+            assert up["status"] == "completed", up
+            out = await _ca(client, "clinical_copy_to_workspace", paths=[f"{run}/p.sas"])
+            assert out["status"] in ("completed", "completed_with_warnings"), out
+            assert (await _ca(client, "clinical_check_out", paths=[f"{run}/p.sas"], with_content=False))[
+                "status"
+            ] == "completed"
+            assert (await _ca(client, "clinical_get_item", path=f"{run}/p.sas"))["checkedOutByYou"] is True
+            await _ca(client, "clinical_write_file", path=f"{run}/p.sas", content="%put v2;\n")
+            checked = await _ca(client, "clinical_check_in", paths=[f"{run}/p.sas"], comment="MCP integration test")
+            assert checked["status"] == "completed", checked
+            assert (await _ca(client, "clinical_read_file", path=f"{run}/p.sas"))["content"] == "%put v2;\n"
+            assert (await _ca(client, "clinical_check_out", paths=[f"{run}/p.sas"]))["status"] == "completed"
+            assert (await _ca(client, "clinical_undo_check_out", paths=[f"{run}/p.sas"]))["status"] == "completed"
+            versioning = await _ca(
+                client, "clinical_set_versioning", path=f"{run}/p.sas", enabled=True, comment="MCP integration test"
+            )
+            # Without a versioning privilege the server refuses; the tool says why.
+            assert versioning["status"] == "completed" or "hint" in versioning or versioning["status"] == "refused"
+            renamed = await _ca(
+                client, "clinical_rename_item", path=f"{run}/p.sas", new_name="q.sas", location="repository"
+            )
+            assert renamed["status"] == "renamed"
+            assert any(
+                e["action"] == "checkedIn"
+                for e in (await _ca(client, "clinical_search_audit_history", under_path=run, limit=20))["entries"]
+            )
+        finally:
+            await _ca(client, "clinical_delete_items", paths=[run])
+            # Deleting needs DELETE permission on the folder, which a tester may lack.
+            await _ca(client, "clinical_delete_items", paths=[run], location="repository")
+
+
+async def test_clinical_jobs_workflow(integration_mcp_server, viya_token):
+    """A program run as a job in a scratch workspace folder: create, save with a parameter,
+    run, rerun, read its manifest and log, test-run it, and schedule it."""
+    await _skip_without_ca(viya_token, jobs=True)
+    scratch = f"/mcp-it-jobs-{_SUFFIX}"
+    program = f"{scratch}/hello.sas"
+    job = f"{scratch}/hello.cjob"
+    schedule_id = None
+    async with Client(integration_mcp_server) as client:
+        try:
+            await _ca(
+                client, "clinical_write_file", path=program, content="data work.h; x=&n; run;\nproc print; run;\n"
+            )
+            first = await _ca(client, "clinical_run_job", program_path=program, wait_seconds=0)
+            assert first["created_job"] == job
+            await _ca(client, "clinical_get_job_run", run_id=first["run_id"], wait_seconds=300)
+            definition = (await _ca(client, "clinical_get_job", path=job))["job"]
+            definition["parameters"] = [{"name": "n", "label": "N", "type": "NUMERIC", "defaultValue": "1"}]
+            assert (await _ca(client, "clinical_save_job", path=job, job=definition))["status"] == "updated"
+            ran = await _ca(client, "clinical_run_job", job_path=job, parameter_values={"n": 42}, wait_seconds=300)
+            assert ran["category"] == "successful", ran
+            assert (await _ca(client, "clinical_get_job_run", run_id=ran["run_id"]))["state"] == ran["state"]
+            manifest = await _ca(client, "clinical_get_job_manifest", run_id=ran["run_id"])
+            assert manifest["parameters"] == [{"name": "n", "type": "NUMERIC", "value": "42"}]
+            log = await _ca(client, "clinical_get_job_output", run_id=ran["run_id"])
+            assert "errors" not in log
+            runs = await _ca(client, "clinical_list_job_runs", job_path=job, limit=5)
+            assert any(r["run_id"] == ran["run_id"] for r in runs["runs"])
+            again = await _ca(client, "clinical_run_job", rerun_of=ran["run_id"], wait_seconds=300)
+            assert again["category"] == "successful"
+            assert (await _ca(client, "clinical_get_job_manifest", run_id=ran["run_id"]))[
+                "status"
+            ] == "manifest_overwritten"
+            assert (await _ca(client, "clinical_cancel_job_run", run_id=again["run_id"]))["status"] == "not_cancelable"
+            tested = await _ca(client, "clinical_run_job", job_path=job, mode="test", wait_seconds=300)
+            assert tested["kind"] == "test"  # fails: the program exists only in the workspace
+
+            saved = await _ca(
+                client,
+                "clinical_save_schedule",
+                name=f"mcp-it-{_SUFFIX}",
+                job_path=job,
+                location="workspace",
+                trigger={"type": "DATELIST", "dates": ["2099-01-01"], "hours": 3, "minutes": 0, "timeZone": "UTC"},
+            )
+            schedule_id = saved["schedule"]["schedule_id"]
+            got = await _ca(client, "clinical_get_schedule", schedule_id=schedule_id)
+            assert got["next_runs"] and got["next_runs"][0].startswith("2099-01-01")
+            assert (await _ca(client, "clinical_set_schedule_state", schedule_id=schedule_id, enabled=False))[
+                "status"
+            ] == "disabled"
+            listed = await _ca(client, "clinical_list_schedules")
+            assert any(sch["schedule_id"] == schedule_id for sch in listed["schedules"])
+            now = await _ca(client, "clinical_run_schedule_now", schedule_id=schedule_id, wait_seconds=300)
+            assert now["category"] == "successful", now
+        finally:
+            if schedule_id:
+                await _ca(client, "clinical_delete_schedule", schedule_id=schedule_id)
+            await _ca(client, "clinical_delete_items", paths=[scratch])

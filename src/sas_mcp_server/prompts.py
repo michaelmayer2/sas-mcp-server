@@ -174,3 +174,66 @@ def register_prompts(mcp: FastMCP) -> None:
             f"blank) to LOOK at the result; iterate until the overview page answers the key "
             f"questions in five seconds."
         ))]
+
+    @mcp.prompt()
+    def promote_clinical_job(job_path: str, study_path: str | None = None) -> list[Message]:
+        """Take a clinical job from the Clinical Workspace to an audited run from the Clinical Repository
+        (run and populate -> check in -> test -> run from the repository -> review the manifest)."""
+        study_line = f"\nThe study's repository folder is {study_path}." if study_path else ""
+        return [Message(role="user", content=(
+            f"Promote the SAS Clinical Acceleration job {job_path} from my Clinical Workspace "
+            f"to an audited run from the Clinical Repository, using the clinical_* tools.{study_line}\n\n"
+            f"Work through these stages in order, and stop to tell me when a stage fails:\n\n"
+            f"1. REVIEW — clinical_get_job on {job_path} (location workspace): its programs, "
+            f"parameters, output locations and problems. Programs should reach their inputs "
+            f"through &_SASWS_ (the workspace root in every job run), e.g. "
+            f"libname sdtm \"&_SASWS_/<study>/data/sdtm\";.\n\n"
+            f"2. RUN AND POPULATE — clinical_run_job with mode='run_and_populate' "
+            f"(relative_paths true unless I say otherwise). On success the service rewrites "
+            f"the job's publishSetup from what the programs read and wrote and clears its "
+            f"check-in locations. Read the job again and, if outputs should be checked in, set "
+            f"publishCheckin.locations with clinical_save_job. On failure, read the log "
+            f"(clinical_get_job_output) and explain the errors.\n\n"
+            f"3. CHECK IN — clinical_check_in the job, its programs and the inputs its "
+            f"publishSetup names, with a comment that says why. Report anything it skipped "
+            f"and why (a copy that is not checked out, a file someone else holds).\n\n"
+            f"4. TEST — clinical_run_job with mode='test' on the workspace job: it reads "
+            f"programs and inputs from the repository and checks nothing in. A failure here "
+            f"names what exists only in my workspace.\n\n"
+            f"5. RUN FROM THE REPOSITORY — clinical_run_job with location='repository'. Then "
+            f"clinical_get_job_manifest on the run: summarize the programs and their results, "
+            f"the input and output versions with checksums, and any check-in failures.\n\n"
+            f"Never sign files, and ask me before changing anything outside the job's folders."
+        ))]
+
+    @mcp.prompt()
+    def audit_clinical_run(run_id: str | None = None, cmnf_path: str | None = None,
+                           question: str | None = None) -> list[Message]:
+        """Review a clinical job run's manifest as an audit record: what ran, under whose identity,
+        which input and output versions, and whether everything was checked in."""
+        if run_id:
+            target = f"the clinical job run {run_id}"
+            fetch = f"clinical_get_job_manifest with run_id='{run_id}'"
+        elif cmnf_path:
+            target = f"the latest run recorded in {cmnf_path}"
+            fetch = f"clinical_get_job_manifest with cmnf_path='{cmnf_path}'"
+        else:
+            target = "my most recent clinical job run"
+            fetch = "clinical_list_job_runs (limit 1), then clinical_get_job_manifest on that run"
+        question_line = f"\n\nAnswer this question from the record: {question}" if question else ""
+        return [Message(role="user", content=(
+            f"Review {target} as an audit record of SAS Clinical Acceleration. Get it with "
+            f"{fetch}.\n\n"
+            f"Report, citing paths and versions exactly as the manifest gives them:\n"
+            f"- the job (path, version, workspace or repository run), who ran it and when, "
+            f"and how it ended;\n"
+            f"- each program with its result and run time;\n"
+            f"- the parameter values (masked ones stay hidden);\n"
+            f"- every input and output with its version and MD5 checksum, and external "
+            f"inputs or outputs outside the repository, which the audit trail does not cover;\n"
+            f"- where outputs were checked in, and any check-in failures.\n\n"
+            f"If a program did not succeed, read the log with clinical_get_job_output and "
+            f"quote the ERROR lines. If the manifest is no longer available (a later run "
+            f"overwrote the .cmnf), say so and use clinical_search_audit_history for what "
+            f"remains.{question_line}"
+        ))]

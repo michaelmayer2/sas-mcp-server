@@ -40,6 +40,8 @@ async def test_all_prompts_registered(prompt_mcp):
         "sas_macro_builder",
         "generate_report",
         "build_va_dashboard",
+        "promote_clinical_job",
+        "audit_clinical_run",
     }
     prompts = await prompt_mcp.list_prompts()
     registered = {p.name for p in prompts}
@@ -158,3 +160,29 @@ async def test_build_va_dashboard_minimal(prompt_mcp):
     assert "Public.CARS" in content
     assert "Audience:" not in content
     assert "Focus" not in content.split("\n")[0]
+
+
+async def test_promote_clinical_job(prompt_mcp):
+    prompt_fn = await _prompt_fn(prompt_mcp, "promote_clinical_job")
+    content = prompt_fn(job_path="/S/programs/adsl.cjob", study_path="/Org/S")[0].content.text
+    assert "/S/programs/adsl.cjob" in content and "/Org/S" in content
+    for stage in ("REVIEW", "RUN AND POPULATE", "CHECK IN", "TEST", "RUN FROM THE REPOSITORY"):
+        assert stage in content
+    for tool in ("clinical_run_job", "clinical_check_in", "clinical_get_job_manifest", "clinical_save_job"):
+        assert tool in content
+    assert "repository folder" not in prompt_fn(job_path="/a.cjob")[0].content.text
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        ({"run_id": "r-1", "question": "Which adsl version?"}, "run_id='r-1'"),
+        ({"cmnf_path": "/S/adsl.cmnf"}, "cmnf_path='/S/adsl.cmnf'"),
+        ({}, "clinical_list_job_runs"),
+    ],
+)
+async def test_audit_clinical_run(prompt_mcp, args, expected):
+    prompt_fn = await _prompt_fn(prompt_mcp, "audit_clinical_run")
+    content = prompt_fn(**args)[0].content.text
+    assert expected in content and "MD5" in content
+    assert ("Which adsl version?" in content) == ("question" in args)

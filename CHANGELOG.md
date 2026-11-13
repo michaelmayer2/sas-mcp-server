@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Tier 12 — Clinical Repository and Tier 13 — Clinical Jobs (SAS Clinical Acceleration): 34 tools that do what the Clinical Acceleration views of the Positron SAS extension do, plus repository search, audit history and signature history.** Everything runs under the caller's own identity and CA permissions; paths address everything, and `location` (`repository` or `workspace`) says which store a call means. The server goes from 137 tools in 12 tiers to **171 in 14 (80 read-only)**.
+  - *Tier 12 (20 tools).* Browse and read the repository and your workspace at any version (**`clinical_list_items`**, **`clinical_get_item`** with your permissions and versioning privileges, **`clinical_read_file`**, **`clinical_download_items`**, **`clinical_list_versions`**, **`clinical_compare_files`**); search the repository, the audit history and a file's signatures (**`clinical_search_repository`**, **`clinical_search_audit_history`**, **`clinical_get_signature_history`**); move files through the workspace (**`clinical_copy_to_workspace`**, **`clinical_check_out`**, **`clinical_undo_check_out`**, **`clinical_check_in`** with a required comment, reporting what it left out and why, **`clinical_write_file`**); manage items in either store (**`clinical_create_folder`**, **`clinical_rename_item`**, **`clinical_delete_items`** — the repository's go to the recycle bin — **`clinical_upload`**, **`clinical_set_versioning`**); and **`clinical_load_dataset`**, which loads a `.sas7bdat` or `.xpt` into a WORK library of the compute session.
+  - *Tier 13 (14 tools).* Read and save `.cjob` jobs, run them (**`clinical_run_job`**: run, test, run and populate, one program as a job, or a rerun), follow, list and cancel runs, read a run's manifest — the audit record, with input and output versions and MD5 checksums, and the check-in locations filled from the `.cmnf` when the service leaves them out — and its log or listing, and create, inspect, enable or disable, run and delete schedules.
+  - *Prompts.* **`promote_clinical_job`** (run and populate → check in → test → run from the repository → review the manifest) and **`audit_clinical_run`**.
+  - Electronic signing is not offered: a signature needs the signer's authenticator PIN.
+  - The requests follow what the services accept live, which differs from the published API reference in several places; `helpers/clinical_helpers.py` records the contract. Where the server fails a versioned upload or check-in with an internal error because the user lacks the versioning privilege, the tools say so and suggest retrying without a version.
+- **Integration tests accept `VIYA_ACCESS_TOKEN`** in place of a username and password, for servers whose SAS Logon offers no client that allows the password grant. `CA_TEST_REPOSITORY_FOLDER` opts in to the repository-writing Clinical Acceleration tests.
+
+### Changed
+- **The `file_path` / `url` upload sources moved to `helpers/upload_sources.py`**, so tiers other than Tier 2 can use them. No behaviour change.
+
 ## [1.20.0] - 2026-11-12
 
 ### Added

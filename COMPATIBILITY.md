@@ -203,6 +203,14 @@ Same tool as in Tier 0. This tier exposes it on its own.
 
 Tier 10 is meant to run with Tier 7, which puts this content into decisions and reads, locks, copies and deletes it.
 
+## Tiers 12 and 13 — SAS Clinical Acceleration
+
+The Clinical Repository (Tier 12) and Clinical Jobs (Tier 13) tools are not part of this matrix. SAS Clinical Acceleration is a separately licensed offering, and its services (`clinicalRepository`, `clinicalActionStatus`, `clinicalJobs`) are versioned on their own rather than per SAS Viya release, so the per-release specifications used above do not cover them.
+
+- **Checked against:** a live SAS Viya server running clinicalRepository 1.14.8, clinicalJobs 1.10.7 and clinicalActionStatus 1.10.7 (2026-11-13), every tool exercised, and the calls the Positron SAS extension verified against a SAS Viya 2025 server.
+- **Where the published reference differs from the services**, the tools follow the services; `src/sas_mcp_server/helpers/clinical_helpers.py` lists each difference.
+- **Without Clinical Acceleration** (or without SAS Clinical Job Management, for Tier 13), the tools answer `service_unavailable` rather than failing.
+
 ---
 
 ## What the differences are, by API

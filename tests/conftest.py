@@ -224,9 +224,21 @@ def viya_credentials():
 
 
 @pytest.fixture(scope="session")
-def viya_token(viya_credentials):
-    """Get a real Viya access token via password grant."""
+def viya_token(request):
+    """A real Viya access token: ``VIYA_ACCESS_TOKEN`` as is, or one from a password grant.
+
+    The token variable serves servers whose SAS Logon offers no client that
+    allows the password grant: sign in some other way (e.g. ``sas-mcp-login``)
+    and pass the access token.
+    """
     from sas_mcp_server.config import SSL_VERIFY
+
+    token = os.getenv("VIYA_ACCESS_TOKEN", "").strip()
+    if token:
+        if not os.getenv("VIYA_ENDPOINT", ""):
+            pytest.skip("VIYA_ACCESS_TOKEN needs VIYA_ENDPOINT")
+        return token
+    viya_credentials = request.getfixturevalue("viya_credentials")
     client_id = os.getenv("TEST_CLIENT_ID", "sas.cli")
     resp = httpx.post(
         f"{viya_credentials['endpoint']}/SASLogon/oauth/token",
