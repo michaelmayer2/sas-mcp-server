@@ -124,6 +124,25 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "list_model_repositories",
         "list_model_projects",
         "get_project_kpis",
+        # Tier 12 — Clinical Repository. Reads of file content are audited as
+        # downloads by the service, but change nothing.
+        "clinical_list_items",
+        "clinical_get_item",
+        "clinical_read_file",
+        "clinical_download_items",
+        "clinical_list_versions",
+        "clinical_compare_files",
+        "clinical_search_repository",
+        "clinical_search_audit_history",
+        "clinical_get_signature_history",
+        # Tier 13 — Clinical Jobs
+        "clinical_get_job",
+        "clinical_get_job_run",
+        "clinical_list_job_runs",
+        "clinical_get_job_manifest",
+        "clinical_get_job_output",
+        "clinical_list_schedules",
+        "clinical_get_schedule",
     }
 )
 
@@ -231,6 +250,26 @@ WRITE_TOOLS: frozenset[str] = frozenset(
         "run_performance_definition",  # scores and writes results to ModelPerformanceData
         "set_kpi_alert_rule",
         "delete_kpi_alert_rule",
+        # Tier 12 — Clinical Repository
+        "clinical_copy_to_workspace",
+        "clinical_check_out",
+        "clinical_undo_check_out",
+        "clinical_check_in",
+        "clinical_write_file",
+        "clinical_create_folder",
+        "clinical_rename_item",
+        "clinical_delete_items",
+        "clinical_upload",
+        "clinical_set_versioning",
+        "clinical_load_dataset",  # writes files and a library into the compute session's WORK
+        # Tier 13 — Clinical Jobs
+        "clinical_save_job",
+        "clinical_run_job",  # running is a write: outputs, manifest, check-ins
+        "clinical_cancel_job_run",
+        "clinical_save_schedule",
+        "clinical_set_schedule_state",
+        "clinical_delete_schedule",
+        "clinical_run_schedule_now",
     }
 )
 
@@ -293,6 +332,26 @@ DESTRUCTIVE_TOOLS: frozenset[str] = frozenset(
         # Updates the rule for the same KPI, variable and direction in place.
         "set_kpi_alert_rule",
         "delete_kpi_alert_rule",
+        # Tier 12: each can replace your workspace copy of a file, drop
+        # unchecked-in changes, or remove items (repository deletes go to the
+        # recycle bin); disabling versioning drops the version history.
+        "clinical_copy_to_workspace",
+        "clinical_check_out",  # with content, replaces the workspace copy
+        "clinical_undo_check_out",
+        "clinical_check_in",  # replaces the content of unversioned files
+        "clinical_write_file",
+        "clinical_rename_item",
+        "clinical_delete_items",
+        "clinical_upload",
+        "clinical_set_versioning",
+        "clinical_load_dataset",  # empties and refills the library it loads into
+        # Tier 13
+        "clinical_save_job",  # replaces the .cjob file
+        "clinical_run_job",  # overwrites the job's log, listing and manifest
+        "clinical_cancel_job_run",
+        "clinical_save_schedule",  # with schedule_id, replaces the schedule
+        "clinical_delete_schedule",
+        "clinical_run_schedule_now",
     }
 )
 
@@ -339,6 +398,12 @@ IDEMPOTENT_WRITE_TOOLS: frozenset[str] = frozenset(
         "set_kpi_alert_rule",
         "delete_kpi_alert_rule",
         "describe_analytic_store",  # like validate_custom_function: work, no state change
+        "clinical_write_file",  # the same content again
+        "clinical_load_dataset",  # loads the same library again
+        "clinical_save_job",
+        "clinical_cancel_job_run",
+        "clinical_set_schedule_state",
+        "clinical_delete_schedule",
     }
 )
 
@@ -353,6 +418,9 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
         "upload_file",
         # Git and container-registry destinations are outside Viya.
         "publish_model",
+        # The url source of the Clinical Repository uploads.
+        "clinical_upload",
+        "clinical_write_file",
     }
 )
 

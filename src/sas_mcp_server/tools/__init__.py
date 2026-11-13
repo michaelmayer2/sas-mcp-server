@@ -32,6 +32,8 @@ from ..ui import app_config, fingerprint, register_views
 from ..viya_client import logger
 from . import (
     automl,
+    clinical_jobs,
+    clinical_repository,
     compute,
     data_ops,
     decisioning,
@@ -69,6 +71,8 @@ _TIER_REGISTRARS: dict[int, Registrar] = {
     9: glossary.register,
     10: decisioning_content.register,
     11: model_lifecycle.register,
+    12: clinical_repository.register,
+    13: clinical_jobs.register,
 }
 
 TIER_TITLES: dict[int, str] = {
@@ -84,6 +88,8 @@ TIER_TITLES: dict[int, str] = {
     9: "Business Glossary (SAS Data Governance)",
     10: "Decisioning Advanced (SAS Intelligent Decisioning)",
     11: "Model Lifecycle (SAS Model Manager)",
+    12: "Clinical Repository (SAS Clinical Acceleration)",
+    13: "Clinical Jobs (SAS Clinical Job Management)",
 }
 
 ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
@@ -92,6 +98,10 @@ ALL_TIERS: frozenset[int] = frozenset(_TIER_REGISTRARS)
 # read, lock, copy and delete, so enabling it alone draws a warning.
 DECISIONING_FOUNDATION = 7
 DECISIONING_ADVANCED = 10
+# Tier 13 runs jobs whose files, inputs and outputs live in the Clinical
+# Repository and Workspace, which only Tier 12's tools browse, edit and check in.
+CLINICAL_REPOSITORY = 12
+CLINICAL_JOBS = 13
 
 # tool name -> tier, filled in as the tiers register. Telemetry stamps it on
 # every record so usage can be rolled up per tier (which tiers earn their place
@@ -243,6 +253,13 @@ def register_tools(
             "segmentation trees, code files, value lists and custom functions, but using them in a decision "
             "flow, and listing, reading, locking, copying or deleting them, needs Tier %d: add %d to MCP_TIERS.",
             DECISIONING_ADVANCED, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION, DECISIONING_FOUNDATION,
+        )
+    if CLINICAL_JOBS in enabled and CLINICAL_REPOSITORY not in enabled:
+        logger.warning(
+            "Tier %d (Clinical Jobs) is enabled without Tier %d (Clinical Repository). It can run and schedule "
+            "clinical jobs and read their manifests, but creating the programs a job runs, checking a job and its "
+            "inputs in, and reading or comparing files needs Tier %d: add %d to MCP_TIERS.",
+            CLINICAL_JOBS, CLINICAL_REPOSITORY, CLINICAL_REPOSITORY, CLINICAL_REPOSITORY,
         )
     seen: list[str] = []
     version = server_version() or ""
